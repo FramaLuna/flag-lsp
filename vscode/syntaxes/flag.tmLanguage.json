@@ -1,0 +1,308 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Flag",
+  "scopeName": "source.flag",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#characters"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#markers"
+    },
+    {
+      "include": "#keyword-as-member"
+    },
+    {
+      "include": "#keyword-as-variable"
+    },
+    {
+      "include": "#module-header"
+    },
+    {
+      "include": "#use-header"
+    },
+    {
+      "include": "#function-decl"
+    },
+    {
+      "include": "#operator-decl"
+    },
+    {
+      "include": "#type-decl"
+    },
+    {
+      "include": "#context-decl"
+    },
+    {
+      "include": "#declaration-modifiers"
+    },
+    {
+      "include": "#value-generic"
+    },
+    {
+      "include": "#type-generic"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#at-builtins"
+    },
+    {
+      "include": "#builtins"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#function-call"
+    },
+    {
+      "include": "#custom-type"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#variables"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "name": "comment.line.number-sign.flag",
+      "match": "#.*$"
+    },
+    "strings": {
+      "name": "string.quoted.double.flag",
+      "begin": "\"",
+      "end": "\"",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.flag"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.flag"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#escape"
+        }
+      ]
+    },
+    "escape": {
+      "name": "constant.character.escape.flag",
+      "match": "\\\\(x[0-9a-fA-F]{2}|.)"
+    },
+    "characters": {
+      "name": "constant.character.flag",
+      "match": "'(\\\\(x[0-9a-fA-F]{2}|.)|[^'\\\\])'"
+    },
+    "numbers": {
+      "name": "constant.numeric.flag",
+      "match": "\\b(0x[0-9a-fA-F_]+|0b[01_]+|[0-9][0-9_]*(\\.[0-9][0-9_]*)?([eE][+-]?[0-9]+)?)\\b"
+    },
+    "markers": {
+      "comment": "@trust and @check mark code for the memory checker.",
+      "name": "storage.modifier.flag",
+      "match": "@(trust|check)\\b"
+    },
+    "keyword-as-member": {
+      "comment": "A keyword right after '.' is a field name: t.type.",
+      "name": "variable.other.member.flag",
+      "match": "(?<=\\.)(if|elif|else|while|for|in|reverse|return|is|and|or|xor|not|as|where|break|continue|defer|try|trust|iferror|ifnull|case|func|type|enum|error|operator|fatptr|packed|export|extern|module|use|priv|switch|with|context)\\b"
+    },
+    "keyword-as-variable": {
+      "comment": "A declaration word right before ':', '=' or '.' is a name: type: usize.",
+      "name": "variable.other.flag",
+      "match": "\\b(func|type|enum|error|operator|fatptr|packed|export|extern|module|use|priv|switch|with|context)\\b(?=\\s*[:=.])"
+    },
+    "module-header": {
+      "match": "^(module)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": {
+          "name": "keyword.control.module.flag"
+        },
+        "2": {
+          "name": "entity.name.namespace.flag"
+        }
+      }
+    },
+    "use-header": {
+      "match": "^(use)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s+(as)\\s+([A-Za-z_][A-Za-z0-9_]*))?",
+      "captures": {
+        "1": {
+          "name": "keyword.control.module.flag"
+        },
+        "2": {
+          "name": "entity.name.namespace.flag"
+        },
+        "3": {
+          "name": "keyword.control.module.flag"
+        },
+        "4": {
+          "name": "entity.name.namespace.flag"
+        }
+      }
+    },
+    "function-decl": {
+      "match": "^\\s*(?:(priv|export)\\s+)?(func)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": {
+          "name": "storage.modifier.flag"
+        },
+        "2": {
+          "name": "keyword.other.flag"
+        },
+        "3": {
+          "name": "entity.name.function.flag"
+        }
+      }
+    },
+    "operator-decl": {
+      "match": "^(?:(priv)\\s+)?(operator)\\s*(==|<<|>>|\\+=|and\\b|or\\b|xor\\b|[-+*/%<=])",
+      "captures": {
+        "1": {
+          "name": "storage.modifier.flag"
+        },
+        "2": {
+          "name": "keyword.other.flag"
+        },
+        "3": {
+          "name": "entity.name.function.operator.flag"
+        }
+      }
+    },
+    "type-decl": {
+      "match": "^(?:(priv)\\s+)?(?:(packed)\\s+)?(type)(?:\\s+(error))?(?:\\s+(enum|fatptr))?\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": {
+          "name": "storage.modifier.flag"
+        },
+        "2": {
+          "name": "storage.modifier.flag"
+        },
+        "3": {
+          "name": "keyword.other.flag"
+        },
+        "4": {
+          "name": "storage.modifier.flag"
+        },
+        "5": {
+          "name": "storage.modifier.flag"
+        },
+        "6": {
+          "name": "entity.name.type.flag"
+        }
+      }
+    },
+    "context-decl": {
+      "match": "^(?:(priv)\\s+)?(context)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": {
+          "name": "storage.modifier.flag"
+        },
+        "2": {
+          "name": "keyword.other.flag"
+        },
+        "3": {
+          "name": "constant.language.flag"
+        }
+      }
+    },
+    "declaration-modifiers": {
+      "comment": "priv before a constant, and extern blocks.",
+      "match": "^(priv|extern)\\b",
+      "captures": {
+        "1": {
+          "name": "storage.modifier.flag"
+        }
+      }
+    },
+    "value-generic": {
+      "name": "storage.type.generic.flag",
+      "match": "\\$\\$[A-Za-z_][A-Za-z0-9_]*"
+    },
+    "type-generic": {
+      "name": "storage.type.generic.flag",
+      "match": "\\$[A-Za-z_][A-Za-z0-9_]*"
+    },
+    "constants": {
+      "name": "constant.language.flag",
+      "match": "\\b(true|false|null|IterationEnd)\\b"
+    },
+    "at-builtins": {
+      "comment": "@here, @linux, @compile_error...",
+      "name": "support.function.builtin.flag",
+      "match": "@[a-z_][a-z0-9_]*"
+    },
+    "builtins": {
+      "name": "support.function.builtin.flag",
+      "match": "\\b(print|eprint|ptr|sizeof|can_assign)\\b(?=\\s*\\()"
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.flag",
+          "match": "\\b(and|as|break|continue|defer|elif|else|for|if|in|is|not|or|try|trust|where|while|xor|iferror|ifnull)\\b"
+        },
+        {
+          "comment": "reverse is a keyword right after in.",
+          "name": "keyword.control.flag",
+          "match": "(?<=\\bin\\s)reverse\\b"
+        },
+        {
+          "comment": "Keywords that start a statement.",
+          "match": "^\\s*(switch|case|with|return)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.flag"
+            }
+          }
+        }
+      ]
+    },
+    "types": {
+      "name": "support.type.flag",
+      "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|usize|f32|f64|bool|bytes|str|strview|cstr|slice|list|array|map|fixmap)\\b"
+    },
+    "function-call": {
+      "match": "\\b(?:([A-Za-z_][A-Za-z0-9_]*)\\s*\\.\\s*)?([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "captures": {
+        "1": {
+          "name": "entity.name.namespace.flag"
+        },
+        "2": {
+          "name": "entity.name.function.flag"
+        }
+      }
+    },
+    "custom-type": {
+      "comment": "Declared types are PascalCase by convention.",
+      "name": "entity.name.type.flag",
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+    },
+    "operators": {
+      "name": "keyword.operator.flag",
+      "match": "(->|:=|==|!=|<=|>=|\\+=|-=|\\*=|/=|%=|\\.\\.|\\.\\*|<<|>>|\\|\\||[-+*/%<>=|?&])"
+    },
+    "variables": {
+      "name": "variable.other.flag",
+      "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
+    }
+  }
+}

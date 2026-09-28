@@ -1,0 +1,71 @@
+{
+  "name": "flag",
+  "displayName": "Flag",
+  "description": "Flag (.flg): highlighting, and flagls for errors, hover and go to definition",
+  "version": "0.1.0",
+  "publisher": "framaluna",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FramaLuna/flag-lsp.git"
+  },
+  "homepage": "https://github.com/FramaLuna/flag-lsp#readme",
+  "bugs": {
+    "url": "https://github.com/FramaLuna/flag-lsp/issues"
+  },
+  "main": "./extension.js",
+  "icon": "icons/flag-128.png",
+  "activationEvents": [
+    "onLanguage:flag",
+    "workspaceContains:**/*.flg"
+  ],
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "flag",
+        "aliases": [
+          "Flag"
+        ],
+        "extensions": [
+          ".flg"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/flag.svg",
+          "dark": "./icons/flag.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "flag",
+        "scopeName": "source.flag",
+        "path": "./syntaxes/flag.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Flag",
+      "properties": {
+        "flag.server": {
+          "type": "string",
+          "default": "flagls",
+          "description": "The flagls binary; it runs the flagc next to it, or the one on PATH. A relative path starts at the workspace folder."
+        },
+        "flag.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Folders or files, relative to the workspace folder, that flagls leaves out. Everything else is checked."
+        }
+      }
+    }
+  }
+}

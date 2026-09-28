@@ -1,0 +1,69 @@
+name: build
+
+on:
+  push:
+    branches: [main, "release-*"]
+    tags: ["v*"]
+  pull_request:
+
+env:
+  FLAG: v0.1.0
+
+jobs:
+  flagls:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+          - os: macos-latest
+            target: macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: FramaLuna/flag-lang
+          ref: ${{ env.FLAG }}
+          path: flag-lang
+      - run: flag-lang/build.sh
+      - run: ./build.sh flag-lang/build/flagc
+      - run: |
+          name=flagls-$(node -p "require('./vscode/package.json').version")-${{ matrix.target }}
+          mkdir -p "build/$name"
+          cp build/flagls README.md LICENSE "build/$name/"
+          tar -czf "build/$name.tar.gz" -C build "$name"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: flagls-${{ matrix.target }}
+          path: build/flagls-*.tar.gz
+
+  vscode:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: npx --yes @vscode/vsce package --out ..
+        working-directory: vscode
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vscode
+          path: "*.vsix"
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [flagls, vscode]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - run: test "$(node -p "require('./vscode/package.json').version")" = "${GITHUB_REF_NAME#v}"
+      - uses: actions/download-artifact@v8
+        with:
+          path: packages
+          merge-multiple: true
+      - run: awk -v v="${GITHUB_REF_NAME#v}" '/^## /{p = $2 == v; next} p' CHANGELOG.md > notes.md
+      - run: gh release create "$GITHUB_REF_NAME" packages/* --draft --title "flag-lsp $GITHUB_REF_NAME" --notes-file notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}

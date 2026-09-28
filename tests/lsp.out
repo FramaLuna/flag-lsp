@@ -1,0 +1,8 @@
+{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"hoverProvider":true,"definitionProvider":true}}}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://WS/app/main.flg","diagnostics":[{"range":{"start":{"line":2,"character":10},"end":{"line":2,"character":14}},"severity":1,"source":"flagc","message":"no overload of area matches (i32, &strview)","relatedInformation":[{"location":{"uri":"file://WS/app/util.flg","range":{"start":{"line":6,"character":5},"end":{"line":6,"character":9}}},"message":"an overload of area is declared here"},{"location":{"uri":"file://WS/app/util.flg","range":{"start":{"line":3,"character":5},"end":{"line":3,"character":9}}},"message":"an overload of area is declared here"}]}]}}
+{"jsonrpc":"2.0","id":2,"result":{"contents":{"kind":"markdown","value":"```flag\nx: i32\n```"}}}
+{"jsonrpc":"2.0","id":3,"result":[{"uri":"file://WS/app/util.flg","range":{"start":{"line":6,"character":5},"end":{"line":6,"character":9}}},{"uri":"file://WS/app/util.flg","range":{"start":{"line":3,"character":5},"end":{"line":3,"character":9}}}]}
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://WS/app/main.flg","diagnostics":[]}}
+{"jsonrpc":"2.0","id":4,"result":{"contents":{"kind":"markdown","value":"```flag\nfunc area(w: i32, h: i32) -> i32:\n```"}}}
+{"jsonrpc":"2.0","id":5,"result":{"contents":{"kind":"markdown","value":"```flag\nx: i32\n```"}}}
+{"jsonrpc":"2.0","id":6,"result":null}

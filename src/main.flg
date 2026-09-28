@@ -1,0 +1,418 @@
+@trust
+use fs
+use json
+use os
+
+extern "c":
+    func read(fd: i32, at: *bytes, size: usize) -> i64
+    func poll(watch: *Poll, count: u64, wait: i32) -> i32
+    func getpid() -> i32
+
+type Poll:
+    fd: i32
+    events: i16
+    happened: i16
+
+type Opened:
+    path: &str
+    text: &str
+
+type Shown:
+    key: &str
+    path: &str
+    json: &str
+
+type Place:
+    path: &strview
+    line: usize
+    column: usize
+
+context server:
+    input: &str
+    root: &str
+    exclude: &list[&str]
+    documents: &list[Opened]
+    waiting: &list[&str]
+    shown: &list[Shown]
+    compiler: &str
+    scratch: &str
+
+func main() -> i32:
+    server.compiler = dir_of(executable()) + "flagc"
+    if not exists(server.compiler):
+        server.compiler = "flagc"
+    server.scratch = "/tmp/flagls-" + getpid() + ".overlay"
+    while true:
+        with scratch():
+            body := receive()
+            if body is null or not handle(body):
+                break
+    _ = remove(server.scratch)
+    return 0
+
+func receive() -> &strview|null:
+    watch := Poll{0, 1, 0}
+    while true:
+        text := view(server.input)
+        head := find(text, "\r\n\r\n")
+        if head is usize:
+            length: usize = 0
+            for line in split(text[0:head], "\r\n"):
+                if starts_with(line, "Content-Length:"):
+                    given := parse_int(trim(line[15:line.len]))
+                    if given is i64 and given >= 0:
+                        length = usize(given)
+            if text.len >= head + 4 + length:
+                body := temp(text[head + 4:head + 4 + length])
+                rest: &str = text[head + 4 + length:text.len]
+                free(server.input)
+                server.input = rest
+                return body
+        if server.waiting.len > 0 and poll(ptr(watch), 1, 150) == 0:
+            with scratch():
+                check_next()
+        else:
+            reserve(server.input, server.input.len + 65536)
+            got := read(0, (ptr(server.input.*) as usize + server.input.len) as *bytes, server.input.cap - server.input.len)
+            if got <= 0:
+                return null
+            server.input.len += usize(got)
+
+func handle(s: &strview) -> bool:
+    d := parse(s)
+    if d is NotJson:
+        return true
+    defer free(d)
+    method := text(d, get(d, 0, "method"))
+    id := get(d, 0, "id")
+    id_text: &strview = "null"
+    if id is usize:
+        id_text = raw(d, id)
+    params := get(d, 0, "params")
+    path := uri_path(text(d, get(d, params, "textDocument.uri")))
+    switch method:
+    case "initialize":
+        server.root = uri_path(text(d, get(d, params, "rootUri")))
+        list := get(d, params, "initializationOptions.exclude")
+        for i in 0..count(d, list):
+            entry: &str = text(d, item(d, list, i))
+            while ends_with(entry, "/"):
+                entry.len -= 1
+            append(server.exclude, entry)
+        reply(id_text, "{\"capabilities\":{\"textDocumentSync\":1,\"hoverProvider\":true,\"definitionProvider\":true}}")
+    case "initialized":
+        found := walk(server.root)
+        if found is &slice[&strview]:
+            for file in found:
+                if ends_with(file, ".flg"):
+                    wait(file)
+    case "textDocument/didOpen", "textDocument/didChange":
+        content := text(d, get(d, params, "textDocument.text"))
+        changes := get(d, params, "contentChanges")
+        if count(d, changes) > 0:
+            content = text(d, get(d, item(d, changes, count(d, changes) - 1), "text"))
+        forget(path)
+        append(server.documents, Opened{path, content})
+        wait(path)
+    case "textDocument/didClose":
+        forget(path)
+        wait(path)
+    case "textDocument/hover", "textDocument/definition":
+        row := integer(d, get(d, params, "position.line"))
+        units_in := integer(d, get(d, params, "position.character"))
+        result: &strview = "null"
+        if row is i64 and units_in is i64 and not excluded(path):
+            code := text_of(path)
+            start := line_start(code, usize(row) + 1)
+            at := start
+            while at < code.len and items(code)[at] != '\n' and i64(units(code, start, at)) < units_in:
+                at += 1
+            files: &list[&strview]
+            defer free(files)
+            program(path, files)
+            found: &str
+            defer free(found)
+            for answer in split(flagc(files, path + ":" + (usize(row) + 1) + ":" + (at - start + 1)), "\n"):
+                if method == "textDocument/definition" and starts_with(answer, "definition "):
+                    if found.len > 0:
+                        found += ","
+                    found += location(place(answer[11:answer.len]))
+                elif method == "textDocument/hover" and starts_with(answer, "hover "):
+                    if found.len > 0:
+                        found += "\n"
+                    found += answer[6:answer.len]
+            if found.len > 0 and method == "textDocument/definition":
+                result = "[" + found + "]"
+            elif found.len > 0:
+                shown: &str = "{\"contents\":{\"kind\":\"markdown\",\"value\":"
+                quoted(shown, "```flag\n" + found + "\n```")
+                result = shown + "}}"
+                free(shown)
+        reply(id_text, result)
+    case "shutdown":
+        reply(id_text, "null")
+    case "exit":
+        return false
+    case:
+        if id is usize:
+            send("{\"jsonrpc\":\"2.0\",\"id\":" + id_text + ",\"error\":{\"code\":-32601,\"message\":\"flagls does not handle " + method + "\"}}")
+    return true
+
+func check_next():
+    path := temp(server.waiting[0])
+    files: &list[&strview]
+    defer free(files)
+    key: &strview
+    fresh: &list[Shown]
+    defer free(fresh)
+    if not excluded(path):
+        key = program(path, files)
+        said := flagc(files, "")
+        plain: &str
+        defer free(plain)
+        at: usize = 0
+        while at < said.len:
+            if items(said)[at] == 27:
+                while at < said.len and items(said)[at] != 'm':
+                    at += 1
+            else:
+                add_byte(plain, items(said)[at])
+            at += 1
+        message: &strview
+        note: &strview
+        origin: &strview
+        related: &str
+        defer free(related)
+        for line in split(plain, "\n"):
+            if starts_with(line, "error: "):
+                if message.len > 0:
+                    append(fresh, diagnostic(key, message, origin, related, files))
+                message = line[7:line.len]
+                origin = ""
+                related.len = 0
+            elif starts_with(line, "note: "):
+                note = line[6:line.len]
+            elif starts_with(line, "status ") and line != "status 0" and message.len == 0:
+                message = "flagc stopped with " + line
+            elif starts_with(line, "  --> ") and message.len > 0 and origin.len == 0:
+                origin = line[6:line.len]
+            elif starts_with(line, "  --> ") and message.len > 0:
+                if related.len > 0:
+                    related += ","
+                related += "{\"location\":" + location(place(line[6:line.len])) + ",\"message\":"
+                quoted(related, note)
+                related += "}"
+        if message.len > 0:
+            append(fresh, diagnostic(key, message, origin, related, files))
+    touched: &list[&strview]
+    defer free(touched)
+    kept: &list[Shown]
+    for e in server.shown:
+        if e.key == key or e.path == path:
+            append(touched, temp(e.path))
+            free(e.key)
+            free(e.path)
+            free(e.json)
+        else:
+            append(kept, e)
+    for e in fresh:
+        append(touched, e.path)
+        append(kept, e)
+    free(server.shown)
+    server.shown = kept
+    for i in 0..touched.len:
+        first := true
+        for j in 0..i:
+            first = first and touched[j] != touched[i]
+        if first:
+            body: &str = "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":" + uri(touched[i]) + ",\"diagnostics\":["
+            listed := false
+            for e in server.shown:
+                if e.path == touched[i]:
+                    if listed:
+                        body += ","
+                    body += e.json
+                    listed = true
+            body += "]}}"
+            send(body)
+            free(body)
+    left: &list[&str]
+    for w in server.waiting:
+        done := w == path
+        for f in files:
+            done = done or w == f
+        if done:
+            free(w)
+        else:
+            append(left, w)
+    free(server.waiting)
+    server.waiting = left
+
+func diagnostic(key: &strview, message: &strview, origin: &strview, related: &strview, files: &slice[&strview]) -> Shown:
+    spot := origin
+    if spot.len == 0:
+        spot = files[0] + ":1:1"
+    entry: &str = "{\"range\":" + span(place(spot)) + ",\"severity\":1,\"source\":\"flagc\",\"message\":"
+    quoted(entry, message)
+    entry += ",\"relatedInformation\":[" + related + "]}"
+    return Shown{key, place(spot).path, entry}
+
+func place(text: &strview) -> Place:
+    cuts: &list[usize]
+    defer free(cuts)
+    for i in 0..text.len:
+        if items(text)[i] == ':':
+            append(cuts, i)
+    out := Place{text, 1, 1}
+    if cuts.len >= 2:
+        a := cuts[cuts.len - 2]
+        b := cuts[cuts.len - 1]
+        line := parse_int(text[a + 1:b])
+        column := parse_int(text[b + 1:text.len])
+        if line is i64 and column is i64 and line > 0 and column > 0:
+            out = Place{text[0:a], usize(line), usize(column)}
+    return out
+
+func location(p: Place) -> &strview:
+    return "{\"uri\":" + uri(p.path) + ",\"range\":" + span(p) + "}"
+
+func span(p: Place) -> &strview:
+    code := text_of(p.path)
+    start := line_start(code, p.line)
+    at := start
+    while at < code.len and at < start + p.column - 1 and items(code)[at] != '\n':
+        at += 1
+    first := units(code, start, at)
+    if at < code.len and items(code)[at] != '\n':
+        at += 1
+    while at < code.len and is_word(items(code)[at]) and is_word(items(code)[at - 1]):
+        at += 1
+    return "{\"start\":{\"line\":" + (p.line - 1) + ",\"character\":" + first + "},\"end\":{\"line\":" + (p.line - 1) + ",\"character\":" + units(code, start, at) + "}}"
+
+func units(code: &strview, from: usize, to: usize) -> usize:
+    n: usize = 0
+    for i in from..to:
+        b := items(code)[i]
+        if b < 0x80 or b >= 0xC0:
+            n += 1 + usize(b >= 0xF0)
+    return n
+
+func is_word(b: u8) -> bool:
+    return b >= 'a' and b <= 'z' or b >= 'A' and b <= 'Z' or b >= '0' and b <= '9' or b == '_' or b >= 0x80
+
+func line_start(code: &strview, line: usize) -> usize:
+    at: usize = 0
+    row: usize = 1
+    while row < line and at < code.len:
+        if items(code)[at] == '\n':
+            row += 1
+        at += 1
+    return at
+
+func program(path: &strview, files: *&list[&strview]) -> &strview:
+    folder := dir_of(path)
+    folder.len -= 1
+    mains: usize = 0
+    names := list_dir(folder)
+    if names is &slice[&strview]:
+        for name in names:
+            line := join(folder, name)
+            if ends_with(name, ".flg") and not excluded(line):
+                code := text_of(line)
+                if starts_with(code, "func main(") or contains(code, "\nfunc main("):
+                    mains += 1
+                append(files, line)
+    if mains > 1:
+        files.len = 0
+        append(files, path)
+        return path
+    return folder
+
+func flagc(files: &slice[&strview], at: &strview) -> &strview:
+    overlay: &str
+    defer free(overlay)
+    for d in server.documents:
+        overlay += d.path + "\n" + d.text.len + "\n" + d.text
+    _ = write_file(server.scratch, overlay)
+    command: &str = quote(server.compiler) + " -check -overlay " + quote(server.scratch)
+    defer free(command)
+    if at.len > 0:
+        command += " -at " + quote(at)
+    for f in files:
+        command += " " + quote(f)
+    command += " 2>&1; echo status $?"
+    return output(command)
+
+func text_of(path: &strview) -> &strview:
+    for d in server.documents:
+        if d.path == path:
+            return d.text
+    code := read_text_file(path)
+    if code is FsError:
+        return ""
+    kept := temp(code)
+    free(code)
+    return kept
+
+func forget(path: &strview):
+    for i in 0..server.documents.len:
+        if server.documents[i].path == path:
+            gone := remove(server.documents, i)
+            free(gone.path)
+            free(gone.text)
+            return
+
+func excluded(path: &strview) -> bool:
+    if path.len <= server.root.len or not starts_with(path, server.root):
+        return false
+    rel := path[server.root.len + 1:path.len]
+    for e in server.exclude:
+        if rel == e or rel.len > e.len and starts_with(rel, e) and items(rel)[e.len] == '/':
+            return true
+    return false
+
+func wait(path: &strview):
+    for w in server.waiting:
+        if w == path:
+            return
+    file: &str = path
+    append(server.waiting, file)
+
+func reply(id: &strview, result: &strview):
+    send("{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"result\":" + result + "}")
+
+func send(body: &strview):
+    write(1, "Content-Length: " + body.len + "\r\n\r\n" + body)
+
+func quote(text: &strview) -> &strview:
+    return "'" + replace(text, "'", "'\\''") + "'"
+
+func uri_path(uri: &strview) -> &strview:
+    out: &str
+    defer free(out)
+    if not starts_with(uri, "file://"):
+        return ""
+    at: usize = 7
+    while at < uri.len:
+        code: u64|null = null
+        if items(uri)[at] == '%' and at + 2 < uri.len:
+            code = parse_hex(uri[at + 1:at + 3])
+        if code is u64:
+            add_byte(out, u8(code))
+            at += 3
+        else:
+            add_byte(out, items(uri)[at])
+            at += 1
+    return temp(out)
+
+func uri(path: &strview) -> &strview:
+    digits: &strview = "0123456789ABCDEF"
+    out: &str = "\"file://"
+    defer free(out)
+    for b in items(path):
+        if is_word(b) and b < 0x80 or b == '/' or b == '.' or b == '-' or b == '~':
+            add_byte(out, b)
+        else:
+            out += "%" + digits[usize(b) / 16:usize(b) / 16 + 1] + digits[usize(b) % 16:usize(b) % 16 + 1]
+    out += "\""
+    return temp(out)
