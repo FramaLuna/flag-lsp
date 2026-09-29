@@ -3,10 +3,20 @@ use fs
 use json
 use os
 
+STD_INPUT_HANDLE = 0xffff_fff6
+O_BINARY = 0x8000
+
 extern "c":
     func read(fd: i32, at: *bytes, size: usize) -> i64
-    func poll(watch: *Poll, count: u64, wait: i32) -> i32
+    func dup(fd: i32) -> i32
+    func dup2(from: i32, to: i32) -> i32
+    func close(fd: i32) -> i32
+    func fileno(stream: *bytes) -> i32
     func getpid() -> i32
+    func poll(watch: *Poll, count: u64, wait: i32) -> i32
+    func _setmode(fd: i32, mode: i32) -> i32
+    func GetStdHandle(which: u32) -> *bytes
+    func PeekNamedPipe(pipe: *bytes, into: *bytes, size: u32, got: *u32, available: *u32, left: *u32) -> i32
 
 type Poll:
     fd: i32
@@ -36,22 +46,34 @@ context server:
     shown: &list[Shown]
     compiler: &str
     scratch: &str
+    memory: bool
 
 func main() -> i32:
+    binary_stdio()
     server.compiler = dir_of(executable()) + "flagc"
-    if not exists(server.compiler):
+    if not exists(server.compiler) and not exists(server.compiler + ".exe"):
         server.compiler = "flagc"
-    server.scratch = "/tmp/flagls-" + getpid() + ".overlay"
+    folder := env("TEMP")
+    if folder is null:
+        folder = "/tmp"
+    server.scratch = folder + "/flagls-" + getpid()
     while true:
         with scratch():
             body := receive()
             if body is null or not handle(body):
                 break
-    _ = remove(server.scratch)
+    _ = remove(server.scratch + ".overlay")
+    _ = remove(server.scratch + ".out")
     return 0
 
+func binary_stdio() where @windows():
+    _setmode(0, O_BINARY)
+    _setmode(1, O_BINARY)
+
+func binary_stdio() where not @windows():
+    return
+
 func receive() -> &strview|null:
-    watch := Poll{0, 1, 0}
     while true:
         text := view(server.input)
         head := find(text, "\r\n\r\n")
@@ -68,7 +90,7 @@ func receive() -> &strview|null:
                 free(server.input)
                 server.input = rest
                 return body
-        if server.waiting.len > 0 and poll(ptr(watch), 1, 150) == 0:
+        if server.waiting.len > 0 and not input_within(150):
             with scratch():
                 check_next()
         else:
@@ -77,6 +99,19 @@ func receive() -> &strview|null:
             if got <= 0:
                 return null
             server.input.len += usize(got)
+
+func input_within(ms: i32) -> bool where not @windows():
+    watch := Poll{0, 1, 0}
+    return poll(ptr(watch), 1, ms) != 0
+
+func input_within(ms: i32) -> bool where @windows():
+    pipe := GetStdHandle(STD_INPUT_HANDLE)
+    for i in 0..ms / 10:
+        available: u32 = 0
+        if PeekNamedPipe(pipe, usize(0) as *bytes, 0, usize(0) as *u32, ptr(available), usize(0) as *u32) == 0 or available > 0:
+            return true
+        sleep(0.01)
+    return false
 
 func handle(s: &strview) -> bool:
     d := parse(s)
@@ -99,6 +134,8 @@ func handle(s: &strview) -> bool:
             while ends_with(entry, "/"):
                 entry.len -= 1
             append(server.exclude, entry)
+        memory := boolean(d, get(d, params, "initializationOptions.memory"))
+        server.memory = memory is bool and memory
         reply(id_text, "{\"capabilities\":{\"textDocumentSync\":1,\"hoverProvider\":true,\"definitionProvider\":true}}")
     case "initialized":
         found := walk(server.root)
@@ -179,15 +216,19 @@ func check_next():
                 add_byte(plain, items(said)[at])
             at += 1
         message: &strview
+        severity := 1
         note: &strview
         origin: &strview
         related: &str
         defer free(related)
         for line in split(plain, "\n"):
-            if starts_with(line, "error: "):
+            if starts_with(line, "error: ") or starts_with(line, "warning: "):
                 if message.len > 0:
-                    append(fresh, diagnostic(key, message, origin, related, files))
-                message = line[7:line.len]
+                    append(fresh, diagnostic(key, severity, message, origin, related, files))
+                severity = 1
+                if starts_with(line, "warning: "):
+                    severity = 2
+                message = line[trust find(line, " ") + 1:line.len]
                 origin = ""
                 related.len = 0
             elif starts_with(line, "note: "):
@@ -203,7 +244,7 @@ func check_next():
                 quoted(related, note)
                 related += "}"
         if message.len > 0:
-            append(fresh, diagnostic(key, message, origin, related, files))
+            append(fresh, diagnostic(key, severity, message, origin, related, files))
     touched: &list[&strview]
     defer free(touched)
     kept: &list[Shown]
@@ -248,11 +289,11 @@ func check_next():
     free(server.waiting)
     server.waiting = left
 
-func diagnostic(key: &strview, message: &strview, origin: &strview, related: &strview, files: &slice[&strview]) -> Shown:
+func diagnostic(key: &strview, severity: i32, message: &strview, origin: &strview, related: &strview, files: &slice[&strview]) -> Shown:
     spot := origin
     if spot.len == 0:
         spot = files[0] + ":1:1"
-    entry: &str = "{\"range\":" + span(place(spot)) + ",\"severity\":1,\"source\":\"flagc\",\"message\":"
+    entry: &str = "{\"range\":" + span(place(spot)) + ",\"severity\":" + severity + ",\"source\":\"flagc\",\"message\":"
     quoted(entry, message)
     entry += ",\"relatedInformation\":[" + related + "]}"
     return Shown{key, place(spot).path, entry}
@@ -333,15 +374,30 @@ func flagc(files: &slice[&strview], at: &strview) -> &strview:
     defer free(overlay)
     for d in server.documents:
         overlay += d.path + "\n" + d.text.len + "\n" + d.text
-    _ = write_file(server.scratch, overlay)
-    command: &str = quote(server.compiler) + " -check -overlay " + quote(server.scratch)
+    _ = write_file(server.scratch + ".overlay", overlay)
+    command: &list[&strview] = heap([view(server.compiler), "-check", "-overlay", server.scratch + ".overlay"])
     defer free(command)
     if at.len > 0:
-        command += " -at " + quote(at)
+        append(command, "-at")
+        append(command, at)
+    elif server.memory:
+        append(command, "-memory")
     for f in files:
-        command += " " + quote(f)
-    command += " 2>&1; echo status $?"
-    return output(command)
+        append(command, f)
+    said := create(server.scratch + ".out")
+    if said is CannotCreate:
+        return ""
+    kept_out := dup(1)
+    kept_err := dup(2)
+    dup2(fileno(said.handle), 1)
+    dup2(fileno(said.handle), 2)
+    status := run(command)
+    dup2(kept_out, 1)
+    dup2(kept_err, 2)
+    close(kept_out)
+    close(kept_err)
+    close(said)
+    return text_of(server.scratch + ".out") + "\nstatus " + status
 
 func text_of(path: &strview) -> &strview:
     for d in server.documents:
@@ -384,9 +440,6 @@ func reply(id: &strview, result: &strview):
 func send(body: &strview):
     write(1, "Content-Length: " + body.len + "\r\n\r\n" + body)
 
-func quote(text: &strview) -> &strview:
-    return "'" + replace(text, "'", "'\\''") + "'"
-
 func uri_path(uri: &strview) -> &strview:
     out: &str
     defer free(out)
@@ -403,12 +456,16 @@ func uri_path(uri: &strview) -> &strview:
         else:
             add_byte(out, items(uri)[at])
             at += 1
+    if out.len > 2 and items(out)[2] == ':':
+        return temp(out[1:out.len])
     return temp(out)
 
 func uri(path: &strview) -> &strview:
     digits: &strview = "0123456789ABCDEF"
     out: &str = "\"file://"
     defer free(out)
+    if not starts_with(path, "/"):
+        out += "/"
     for b in items(path):
         if is_word(b) and b < 0x80 or b == '/' or b == '.' or b == '-' or b == '~':
             add_byte(out, b)
