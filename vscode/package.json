@@ -1,8 +1,8 @@
 {
   "name": "flag",
   "displayName": "Flag",
-  "description": "Flag (.flg): highlighting, and flagls for errors, hover and go to definition",
-  "version": "0.1.0",
+  "description": "Flag (.flg): highlighting, errors as you type, hover and go to definition",
+  "version": "0.2.0",
   "publisher": "framaluna",
   "license": "MIT",
   "repository": {
@@ -54,8 +54,13 @@
       "properties": {
         "flag.server": {
           "type": "string",
-          "default": "flagls",
-          "description": "The flagls binary; it runs the flagc next to it, or the one on PATH. A relative path starts at the workspace folder."
+          "default": "",
+          "description": "The flagls to run instead of the one that comes with the extension. flagls runs the flagc next to it, or the one in your PATH. A relative path starts at the workspace folder."
+        },
+        "flag.memory": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also show the warnings of the memory checker, flagc -memory. It makes every check slower."
         },
         "flag.exclude": {
           "type": "array",

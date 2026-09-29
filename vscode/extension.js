@@ -1,4 +1,5 @@
 const vscode = require("vscode");
+const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 
@@ -7,8 +8,10 @@ let inbox = Buffer.alloc(0);
 let waiting = new Map();
 let next = 1;
 let problems = null;
+let remembered = null;
 
 function activate(context) {
+	remembered = context.globalState;
 	problems = vscode.languages.createDiagnosticCollection("flag");
 	context.subscriptions.push(
 		problems,
@@ -53,8 +56,28 @@ function start() {
 	const settings = vscode.workspace.getConfiguration("flag");
 	const folders = vscode.workspace.workspaceFolders;
 	const root = folders && folders.length > 0 ? folders[0].uri : null;
-	let command = settings.get("server") || "flagls";
-	if (root && command.includes("/") && !path.isAbsolute(command)) command = path.join(root.fsPath, command);
+	const system = { linux: "linux", darwin: "macos", win32: "windows" }[process.platform];
+	const machine = { x64: "x86_64", arm64: "arm64" }[process.arch];
+	const inside = path.join(__dirname, "server", `${system}-${machine}`, executable("flagls"));
+	let command = settings.get("server") || (fs.existsSync(inside) ? inside : null);
+	if (!command) {
+		advise(
+			"flagls",
+			`Flag: flagls doesn't come for ${process.platform} ${process.arch}, so there are no errors, hover or go to definition. Build it and set flag.server.`,
+			"https://github.com/FramaLuna/flag-lsp#build-from-source"
+		);
+		return;
+	}
+	if (root && !path.isAbsolute(command) && path.basename(command) !== command) command = path.join(root.fsPath, command);
+	const places = [path.dirname(command), ...(process.env.PATH || "").split(path.delimiter)];
+	if (!places.some((folder) => folder && fs.existsSync(path.join(folder, executable("flagc"))))) {
+		advise(
+			"flagc",
+			"Flag: flagc is not in your PATH, so there are no errors, hover or go to definition.",
+			"https://github.com/FramaLuna/flag-lang#installation"
+		);
+		return;
+	}
 	inbox = Buffer.alloc(0);
 	server = spawn(command, [], { stdio: ["pipe", "pipe", "ignore"] });
 	const self = server;
@@ -79,10 +102,22 @@ function start() {
 		processId: process.pid,
 		rootUri: root ? root.toString() : null,
 		capabilities: {},
-		initializationOptions: { exclude: settings.get("exclude") || [] },
+		initializationOptions: { exclude: settings.get("exclude") || [], memory: settings.get("memory") || false },
 	});
 	notify("initialized", {});
 	for (const doc of vscode.workspace.textDocuments) opened(doc);
+}
+
+function executable(name) {
+	return process.platform === "win32" ? name + ".exe" : name;
+}
+
+function advise(name, text, link) {
+	if (remembered.get(`hide.${name}`)) return;
+	vscode.window.showInformationMessage(text, "How to install", "Don't show again").then((choice) => {
+		if (choice === "How to install") vscode.env.openExternal(vscode.Uri.parse(link));
+		if (choice === "Don't show again") remembered.update(`hide.${name}`, true);
+	});
 }
 
 function stop() {
@@ -158,7 +193,8 @@ function publish(params) {
 	problems.set(
 		vscode.Uri.parse(params.uri),
 		params.diagnostics.map((given) => {
-			const shown = new vscode.Diagnostic(range(given.range), given.message, vscode.DiagnosticSeverity.Error);
+			const severity = given.severity === 2 ? vscode.DiagnosticSeverity.Warning : vscode.DiagnosticSeverity.Error;
+			const shown = new vscode.Diagnostic(range(given.range), given.message, severity);
 			shown.source = "flagc";
 			shown.relatedInformation = given.relatedInformation.map(
 				(note) =>

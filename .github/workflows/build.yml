@@ -17,9 +17,18 @@ jobs:
         include:
           - os: ubuntu-latest
             target: linux-x86_64
+            shell: bash
           - os: macos-latest
             target: macos-arm64
+            shell: bash
+          - os: windows-latest
+            target: windows-x86_64
+            shell: msys2 {0}
+            exe: .exe
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/checkout@v7
@@ -27,12 +36,19 @@ jobs:
           repository: FramaLuna/flag-lang
           ref: ${{ env.FLAG }}
           path: flag-lang
+      - if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          install: mingw-w64-ucrt-x86_64-gcc git diffutils
+      - if: runner.os == 'Windows'
+        run: echo "CC=gcc" >> "$GITHUB_ENV"
       - run: flag-lang/build.sh
       - run: ./build.sh flag-lang/build/flagc
       - run: |
-          name=flagls-$(node -p "require('./vscode/package.json').version")-${{ matrix.target }}
+          name=flagls-$(sed -n 's/^  "version": "\(.*\)",$/\1/p' vscode/package.json)-${{ matrix.target }}
           mkdir -p "build/$name"
-          cp build/flagls README.md LICENSE "build/$name/"
+          cp build/flagls${{ matrix.exe }} README.md LICENSE "build/$name/"
           tar -czf "build/$name.tar.gz" -C build "$name"
       - uses: actions/upload-artifact@v7
         with:
@@ -40,9 +56,22 @@ jobs:
           path: build/flagls-*.tar.gz
 
   vscode:
+    needs: flagls
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: flagls-*
+          path: build
+          merge-multiple: true
+      - run: |
+          for archive in build/flagls-*.tar.gz; do
+            name=$(basename "$archive" .tar.gz)
+            mkdir -p "vscode/server/${name#flagls-*-}"
+            tar -xzf "$archive" -C "vscode/server/${name#flagls-*-}" --strip-components=1 --wildcards '*/flagls*'
+          done
+          ls -lR vscode/server
       - run: npx --yes @vscode/vsce package --out ..
         working-directory: vscode
       - uses: actions/upload-artifact@v7
